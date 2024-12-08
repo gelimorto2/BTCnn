@@ -116,7 +116,7 @@ def train_model(X_train, y_train, model, optimizer, criterion, epochs=10):
 # --- Mode 2: Prediction Mode ---
 def predict_model(X_val, y_val, model, scaler_close, btc_data):
     model.eval()
-    
+
     # Animation while predicting
     print(f"{INFO_COLOR}Making Predictions...{RESET_COLOR}")
     loading_animation(message="Predicting")
@@ -124,21 +124,31 @@ def predict_model(X_val, y_val, model, scaler_close, btc_data):
     with torch.no_grad():
         predictions = model(X_val).squeeze().numpy()
 
-    # Plot predicted prices
-    plt.figure(figsize=(10, 6))
-
-    # Get time indices for the validation set predictions
-    predicted_time = btc_data.index[-len(predictions):]
-
-    # Convert time to minutes for better clarity (using relative time)
-    time_in_minutes = [(t - predicted_time[0]).total_seconds() / 60 for t in predicted_time]
+    # Extract the last 30 minutes of actual BTC prices
+    last_30_real_data = btc_data[-30:]
+    real_prices = last_30_real_data['Close'].values
+    real_time = last_30_real_data.index
 
     # Inverse-transform the predictions to actual price scale
     predicted_prices = scaler_close.inverse_transform(predictions.reshape(-1, 1)).squeeze()
 
-    # Plot the predicted prices
-    plt.plot(time_in_minutes, predicted_prices, label="Predicted Prices", color="red")
-    plt.title(f"BTC-USD Predicted Prices (30 min lookahead)")
+    # Match predicted prices to their corresponding times
+    predicted_time = btc_data.index[-len(predictions):]
+    predicted_prices_last_30 = predicted_prices[-30:]  # Only take the last 30 minutes of predictions
+
+    # Plot real vs predicted prices
+    plt.figure(figsize=(10, 6))
+
+    # Convert time to minutes for better clarity
+    real_time_in_minutes = [(t - real_time[0]).total_seconds() / 60 for t in real_time]
+    predicted_time_in_minutes = [(t - real_time[0]).total_seconds() / 60 for t in real_time]
+
+    # Plot the real and predicted prices
+    plt.plot(real_time_in_minutes, real_prices, label="Actual Prices (Last 30 min)", color="green", linewidth=2)
+    plt.plot(predicted_time_in_minutes, predicted_prices_last_30, label="Predicted Prices (Last 30 min)", color="red", linewidth=2)
+
+    # Chart details
+    plt.title("BTC-USD Prediction vs Actual (Last 30 Minutes)")
     plt.xlabel("Time (minutes)")
     plt.ylabel("Price (USD)")
     plt.legend()
@@ -147,12 +157,13 @@ def predict_model(X_val, y_val, model, scaler_close, btc_data):
     plt.xticks(rotation=45)
     plt.show()
 
-    # Display Actual vs Predicted values for the first 10 predictions
-    print(f"{INFO_COLOR}Displaying actual vs predicted values:{RESET_COLOR}")
-    for i in range(10):
-        actual_price = scaler_close.inverse_transform([[y_val[i].item()]])[0][0]
-        predicted_price = scaler_close.inverse_transform([[predictions[i]]])[0][0]
-        print(f"Actual: {actual_price:.2f}, Predicted: {predicted_price:.2f}")
+   # Display Actual vs Predicted values for the last 30 minutes
+    print(f"{INFO_COLOR}Displaying actual vs predicted values for the last 30 minutes:{RESET_COLOR}")
+    for i in range(len(predicted_prices_last_30)):
+     actual_price = float(real_prices[i])  # Ensure it's a Python float
+     predicted_price = float(predicted_prices_last_30[i])  # Ensure it's a Python float
+     print(f"Minute {i + 1}: Actual: {actual_price:.2f}, Predicted: {predicted_price:.2f}")
+
 
 # --- Mode 3: Verbose Info Mode ---
 def verbose_info(X_train, X_val, model, training_losses):
