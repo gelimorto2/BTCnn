@@ -48,17 +48,17 @@ def get_mode():
 
 # --- Data Fetching & Preprocessing ---
 def fetch_data():
-    print(f"{INFO_COLOR}Fetching BTC-USD data for the last 5 days...{RESET_COLOR}")
+    print(f"{INFO_COLOR}Fetching BTC-USD data for the last 6 months...{RESET_COLOR}")
     try:
-        btc_data = yf.download(tickers="BTC-USD", interval="1m", period="5d")
+        btc_data = yf.download(tickers="BTC-USD", interval="1h", period="6mo")
         btc_data = btc_data[['Close']].ffill()  # Use ffill to fill missing values
     except Exception as e:
         print(f"{ERROR_COLOR}Error fetching data: {e}{RESET_COLOR}")
         sys.exit(1)
     
-    # Exclude the last 30 minutes
-    lookahead_minutes = 30
-    btc_data = btc_data[:-lookahead_minutes]
+    # Exclude the last 24 hours (24 * 60 minutes / 60 minutes per hour)
+    lookahead_hours = 24
+    btc_data = btc_data[:-lookahead_hours]
     
     return btc_data
 
@@ -73,6 +73,13 @@ def normalize_data(btc_data):
         sys.exit(1)
     
     return btc_data, scaler_close
+
+# --- Add Moving Averages ---
+def add_moving_averages(btc_data):
+    btc_data['MA7'] = btc_data['Close'].rolling(window=7).mean()
+    btc_data['MA30'] = btc_data['Close'].rolling(window=30).mean()
+    btc_data = btc_data.dropna()
+    return btc_data
 
 # --- Feature Creation (Sliding Window) ---
 def create_sliding_window(data, window_size, lookahead):
@@ -110,7 +117,6 @@ def train_model(X_train, y_train, model, optimizer, criterion, epochs=10):
         optimizer.step()
         training_losses.append(loss.item())
         print(f"Epoch {epoch+1}/{epochs}, Loss: {loss.item()}")
-
     return training_losses
 
 # --- Mode 2: Prediction Mode ---
@@ -124,32 +130,32 @@ def predict_model(X_val, y_val, model, scaler_close, btc_data):
     with torch.no_grad():
         predictions = model(X_val).squeeze().numpy()
 
-    # Extract the last 30 minutes of actual BTC prices
-    last_30_real_data = btc_data[-30:]
-    real_prices = last_30_real_data['Close'].values
-    real_time = last_30_real_data.index
+    # Extract the last 24 hours of actual BTC prices
+    last_24_real_data = btc_data[-24:]
+    real_prices = last_24_real_data['Close'].values
+    real_time = last_24_real_data.index
 
     # Inverse-transform the predictions to actual price scale
     predicted_prices = scaler_close.inverse_transform(predictions.reshape(-1, 1)).squeeze()
 
     # Match predicted prices to their corresponding times
     predicted_time = btc_data.index[-len(predictions):]
-    predicted_prices_last_30 = predicted_prices[-30:]  # Only take the last 30 minutes of predictions
+    predicted_prices_last_24 = predicted_prices[-24:]  # Only take the last 24 hours of predictions
 
     # Plot real vs predicted prices
     plt.figure(figsize=(10, 6))
 
-    # Convert time to minutes for better clarity
-    real_time_in_minutes = [(t - real_time[0]).total_seconds() / 60 for t in real_time]
-    predicted_time_in_minutes = [(t - real_time[0]).total_seconds() / 60 for t in real_time]
+    # Convert time to hours for better clarity
+    real_time_in_hours = [(t - real_time[0]).total_seconds() / 3600 for t in real_time]
+    predicted_time_in_hours = [(t - real_time[0]).total_seconds() / 3600 for t in real_time]
 
     # Plot the real and predicted prices
-    plt.plot(real_time_in_minutes, real_prices, label="Actual Prices (Last 30 min)", color="green", linewidth=2)
-    plt.plot(predicted_time_in_minutes, predicted_prices_last_30, label="Predicted Prices (Last 30 min)", color="red", linewidth=2)
+    plt.plot(real_time_in_hours, real_prices, label="Actual Prices (Last 24 hours)", color="green", linewidth=2)
+    plt.plot(predicted_time_in_hours, predicted_prices_last_24, label="Predicted Prices (Last 24 hours)", color="red", linewidth=2)
 
     # Chart details
-    plt.title("BTC-USD Prediction vs Actual (Last 30 Minutes)")
-    plt.xlabel("Time (minutes)")
+    plt.title("BTC-USD Prediction vs Actual (Last 24 Hours)")
+    plt.xlabel("Time (hours)")
     plt.ylabel("Price (USD)")
     plt.legend()
     plt.grid(True)
@@ -157,13 +163,12 @@ def predict_model(X_val, y_val, model, scaler_close, btc_data):
     plt.xticks(rotation=45)
     plt.show()
 
-   # Display Actual vs Predicted values for the last 30 minutes
-    print(f"{INFO_COLOR}Displaying actual vs predicted values for the last 30 minutes:{RESET_COLOR}")
-    for i in range(len(predicted_prices_last_30)):
+    # Display Actual vs Predicted values for the last 24 hours
+    print(f"{INFO_COLOR}Displaying actual vs predicted values for the last 24 hours:{RESET_COLOR}")
+    for i in range(len(predicted_prices_last_24)):
      actual_price = float(real_prices[i])  # Ensure it's a Python float
-     predicted_price = float(predicted_prices_last_30[i])  # Ensure it's a Python float
-     print(f"Minute {i + 1}: Actual: {actual_price:.2f}, Predicted: {predicted_price:.2f}")
-
+     predicted_price = float(predicted_prices_last_24[i])  # Ensure it's a Python float
+     print(f"Hour {i + 1}: Actual: {actual_price:.2f}, Predicted: {predicted_price:.2f}")
 
 # --- Mode 3: Verbose Info Mode ---
 def verbose_info(X_train, X_val, model, training_losses):
@@ -202,13 +207,14 @@ def main():
 
     # Fetch and preprocess data
     btc_data = fetch_data()
+    btc_data = add_moving_averages(btc_data)
     btc_data, scaler_close = normalize_data(btc_data)
     
     # Prepare features and targets
     window_size = 30
-    lookahead_minutes = 30
-    btc_data_for_training = btc_data[:-lookahead_minutes]
-    features, targets = create_sliding_window(btc_data_for_training['Normalized_Close'].values, window_size, lookahead_minutes)
+    lookahead_hours = 24
+    btc_data_for_training = btc_data[:-lookahead_hours]
+    features, targets = create_sliding_window(btc_data_for_training['Normalized_Close'].values, window_size, lookahead_hours)
 
     # Split data
     validation_split = 0.2
